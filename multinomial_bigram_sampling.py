@@ -24,7 +24,7 @@ for name in names:
 
 
 #Create torch.tensor probability matrix
-prob_matrix = torch.zeros(28,28)
+prob_matrix = torch.ones(28,28)
 
 for words in names:
 	word = ['<S>'] + list(words) + ['<E>']
@@ -33,7 +33,8 @@ for words in names:
 		iy = stoi[y]
 		prob_matrix[ix][iy]+=1
 
-prob_matrix /= torch.sum(prob_matrix, dim = 1).unsqueeze(dim=1)+1
+prob_matrix /= torch.sum(prob_matrix, dim = 1).unsqueeze(dim=1)
+
 
 #Use Multinomial Distribution to select the next letter to create a word
 
@@ -51,3 +52,8 @@ for i in range(50):
 	print(x)
 
 
+# average negative log likelihood
+# for i in prob_matrix:
+nll = -torch.sum(torch.sum(torch.log(prob_matrix), dim=-1)/28)/28
+
+print("NLL: ", nll.item())
