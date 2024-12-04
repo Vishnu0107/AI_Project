@@ -113,7 +113,7 @@ class LayerNormalization(nn.Module):
 # We can do this in pytorch by using the nn.Linear function
 # if d_model is 512 then dff is 2048 
 
-class FeedForwardBlock(n.Module):
+class FeedForwardBlock(nn.Module):
 
     def __init__(self, d_model: int, d_ff: int, dropout: float) -> None:
         super().__init__()
@@ -134,3 +134,167 @@ class MultiHeadAttention(nn.Moule):
         self.d_model = d_model
         self.h = h
         assert d_model % h == 0, "d_model is not divisible by h"
+        # here we need to make sure d_model is divisible by h so we use the assert function to check if the condition is true
+        # if the condition is false then the model will not be able to run
+        self.d_k = d_model // h 
+        # here we divide d_model by h to get the dimensions of the query, key and value vectors. So we divied the vector into columns and each column will have d_k dimensions
+        self.w_q = nn.Linear(d_model, d_model) # Wq
+        self.w_k = nn.Linear(d_model, d_model) # Wk
+        self.w_v = nn.Linear(d_model, d_model) # Wv
+        
+        self.w_o = nn.Linear(d_model, d_model) # Wo
+        self.dropout = nn.Dropout(dropout)
+    
+    # We wil be making an attention function for computing the attention of the weights of the Q, K and V matrices
+    @staticmethod
+    def attention(query, key, value, mask, dropout: nn.Dropout):
+        d_k = query.shape[-1]
+        # (Batch_size, h, seq_len, d_k) to (Batch_size, seq_len, seq_len) 
+        attention_scores = (query @ key.transpose(-2,-1,)) / math.sqrt(d_k) # formula
+        #  @ means matrix multiplication in pytorch
+        if mask is not None:
+            attention_scores = attention_scores.masked_fill(mask == 0, -1e9) # applying softmax on the formula
+        attention_scores = attention_scores.softmax(dim = -1) # (Batch_size, h ,seq_len, seq_len)
+        if dropout is not None:
+            attention_scores = dropout(attention_scores)
+        
+        return (attention_scores @ value), attention_scores # multiplying the softmaxed attention_scores with Values matrix 
+        # We return the tuple as we will be passing this into the other layers and the attention_scores will be mainly used for visualization
+        '''
+        
+        The formula for attention is 
+        
+        Attention(Q,K,V) = softmax(Q*K^T/sqrt(d_k))*V
+
+        '''
+
+    def forward(self, q, k, v, mask ) -> None:
+        # We mask certain positions in the input sequence to prevent the model from interacting with them. When we apply the softmax function to these masked positions,
+        # it computes them to a value close to 0 or 0 and the model will not learn anything from them
+        query = self.w_q(q) # (Batch_size, seq_len, d_model) to (Batch_size, seq_len, d_model) as we multiply Q matrix (Batch_size, seq_len, d_model) by W_q (Batch_size, d_model, d_model) to get (Batch_size, seq_len, d_model)
+        key = self.w_k(k)  # (Batch_size, seq_len, d_model) to (Batch_size, seq_len, d_model) as we multiply K matrix (Batch_size, seq_len, d_model) by W_k (Batch_size, d_model, d_model) to get (Batch_size, seq_len, d_model)
+        value = self.w_v(v) # (Batch_size, seq_len, d_model) to (Batch_size, seq_len, d_model) as we multiply V matrix (Batch_size, seq_len, d_model) by W_v (Batch_size, d_model, d_model) to get (Batch_size, seq_len, d_model)
+
+        # (Batch_size, seq_len, d_model) to (Batch_size, seq_len, h, d_k) to (Batch_size, seq_len, h, d_k) 
+        query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1,2)
+        key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1,2)
+        value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1,2)
+        '''
+
+        Split the embedding dimension into multiple heads (view).
+        Rearrange the data to group by attention head (transpose).
+        transpose does this -> [batch_size, h, seq_len, d_k] from [batch_size, seq_len, h, d_k]
+        This reshaping and transposition are necessary for multi-head attention to operate. 
+        Each attention head gets its own chunk of the embedding dimensions and processes the sequence independently. 
+        The heads are then combined later.
+
+        '''
+        x, self.attention_scores = MultiHeadAttention.attention(query, key, value, mask, self.dropout)
+        # (Batch, h, seq_len, d_k) -> (Batch, seq_len, h, d_k) -> (Batch, seq_len, d_model)
+        x = x.transpose(1,2).contiguous().view(x.shape[0],-1,self.h * self.d_k)
+        # h*d_k is technically h * (d_model // h) which is theoretically d_model itself
+
+        return self.w_o(x) 
+        # so we go from (Batch, seq_len, d_model) -> (Batch, seq_len, d_model)
+
+        # Note :- We use linear layer to convert dimension of the given matrix with respect to a learnable matrix
+
+class ResidualConnection(nn.Module):
+    # Here we are making a connection to skip directly to the add and norm part, basically we skip the multiheadattention layer
+    # Also used to skip the feed forward layer and directly jump to add and norm part
+    # Refer the diagram in the paper or the transformer architecture
+    def __init__(self, dropout: float) -> None:
+        super().__init__()
+        self.dropout = dropout
+        self.norm = LayerNormalization()
+        # norm is used to normalize the input and output of the residual connection
+
+    def forward(self, x, sublayer):
+        return x + self.dropout(sublayer(self.norm(x)))
+
+
+# Now we have built all the necessary blocks for the transformer architecture. Now we will build the encoder and decoder. 
+# For an encoder we need 2 norm & add layers, 1 feed forward layer and 1 multihead attention layer
+
+class EncoderBlock(nn.Module):
+
+    def __init__(self, self_attention_block : MultiHeadAttention, feed_forward_block : FeedForwardBlock, dropout : float) -> None:
+        super().__init__()
+        self.self_attention_block = self_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connection = nn.ModuleList([ResidualConnection(dropout) for _ in range(2)])
+
+    # We mask the input of the encoder as we don't want the padding words to interact with the other words
+    def forward(self, x, src_mask):
+        x = self.residual_connection[0](x, lambda x: self.self_attention_block(x, x, x, src_mask))
+        x = self.residual_connection[1](x, self.feed_forward_block)
+        return x
+
+# We can have n layers of encoedr blocks so we build the encoder
+
+class Encoder(nn.Module):
+
+    def __init__(self, layers: nn.ModuleList) -> None:
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalization()
+
+    def forward(self, x, mask):
+        for layer in self.layers:
+            x = layer(x, mask)
+        return self.norm(x)
+
+# Now we build the decoder block
+
+class DecoderBlock(nn.Module): 
+
+    def __init__(self,self_attention_block: MultiHeadAttention, cross_attention_block: MultiHeadAttention, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+        # Here we have a cross attention block which is a self attention block but takes key and value embeddings from the encoder and the query embeddings from the previous self attention block from the decoder
+        super().__init__()
+        self.self_attention_block = self_attention_block
+        self.cross_attention_block = cross_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.Module([ResidualConnection(dropout) for _ in range(3)])
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        # Here we deal with translation of languages
+        # one src is from one language and the target is from another langauge
+        x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, tgt_mask))
+        x = self.residual_connections[1](x, lambda x: self.cross_attention_block(x, encoder_output, encoder_output, src_mask))
+        x = self.residual_connections[2](x, self.feed_forward_block)
+        return x
+    
+# Now we build the decoder which is a list of decoder blocks
+
+class Decoder(nn.Module):
+
+    def __init__(self, layers: nn.ModuleList) -> None:
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalization()
+    
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        for layer in self.layers:
+            x = layer(x, encoder_output, src_mask, tgt_mask)
+            return self.norm(x)
+
+# Now we build the linear layer which is used to conver the output of the decoder to the output of the model
+# converts the embedding of the output to the sequence of words from the vocabulary and accordingly arranges it based on the positional embedding
+
+class ProjectionLayer(nn.Module):
+
+    def __init__(self, d_model: int, vocab_size: int) -> None:
+        super().__init__()
+        self.proj = nn.Linear(d_model, vocab_size)
+    
+    def forward(self, x):
+        # (Batch, seq_len, d_model) -> (Batch, seq_len, vocab_size)
+        return torch.log_softmax(self.proj(x), dim = -1)
+        # log softmax is a function that takes the input and applies the softmax function to it
+        # Here we apply log to make it numerically stable
+
+# Now we have all the necessary blocks and layers to build the transformer 
+# Please refer the transformer architecture diagram in the paper or online
+
+
+
