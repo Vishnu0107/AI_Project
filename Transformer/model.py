@@ -6,7 +6,7 @@ import torch.nn as nn
 # converts original sentence to a vector of size 512 using the embedding layer
 
 class InputEmbedding(nn.Module):
-    # d_model is the dimmension of the model which is going to 512 if I am not mistaken 
+    # d_model is the dimmension of the model which is going to be 512 if I am not mistaken 
     def __init__(self, d_model:int, vocab_size:int):
         super().__init_()
         self.d_model = d_model
@@ -21,14 +21,14 @@ class InputEmbedding(nn.Module):
         # embedding layer is a dictionary of size vocab_size and returns a vector of size d_model
         return self.embedding(x) * math.sqrt(self._model)
     
-# Now we will be making a positional embedding layer
-# We know Input Embedding layer will split the input into words and map those words to a vector of size d_moedl which is usually 512 
-# Now positional embeddign layer will add the positional information of the input to another vector of size d_model which is 512
-# so ultimatel we will have a vector which mentions the word and another vector which mentions the position of the word
-# The vector made during the postioal embedding layer will be computed once and reused for every sentence during training and inference
+# Now we will be making a positional encoding layer
+# We know Input Embedding layer will split the input into words and map those words to a vector of size d_model which is usually 512 
+# Now positional encoding layer will add the positional information of the input to another vector of size d_model which is 512
+# so ultimately we will have a vector which mentions the word and another vector which mentions the position of the word
+# The vector made during the postional embedding layer will be computed once and reused for every sentence during training and inference
 
-class PositionalEmbedding(nn.Module):
-    # positional embedding layer will take in a vector of size seq_len and returns a vector of size d_model which is usually 512
+class PositionalEncoding(nn.Module):
+    # positional encoding layer will take in a vector of size seq_len and returns a vector of size d_model which is usually 512
     def __init__(self, d_model:int, seq_len:int, dropout: float) -> None:
         super().__init__()
         self.d_model = d_model
@@ -37,7 +37,7 @@ class PositionalEmbedding(nn.Module):
         '''
         Dropout is a layer that randomly drops out some of the neurons in
         the layer. It is used to prevent overfitting. It prevents the model
-        from relying too much on any one particular neuron. It is a regulariztion
+        from relying too much on any one particular neuron. It is a regularization
         technique that helps to prevent the model from memorizing the training data.
         In the beginning, the neurons in the layer are randomly initialized. During inference
         the neurons are kept the same. During training, the neurons are randomly 
@@ -54,7 +54,7 @@ class PositionalEmbedding(nn.Module):
         '''
 
         # Here we apply exponential of log to make it numerically stable
-        # Create a vecotr of shape (seq_len,)
+        # Create a vector of shape (seq_len,)
         position = torch.arange( 0 ,seq_len, dtype = torch.float).unsqueeze(1)
         # Here if we have a seq_len of size 5 the the positon vector will look like this
         '''
@@ -67,25 +67,25 @@ class PositionalEmbedding(nn.Module):
         technically a vector of size 5 x 1. Unsqueeze is a function that makes a tensor of size 5 x 1 
         
         ''' 
-        #Technically this is the formula for the positional embedding
+        #Technically this is the formula for the positional encoding
         div_term = torch.exp( torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model) )
         # we calculate the 10000^(2i/d_model) with log and then take its exponent to make it numerically stable. The value will be a bit different but we will ultimately get the same result
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
 
-        # We will have a batch of sentences and each sentence will have a length of seq_len so we need to add a new dimension to the positional embedding
+        # We will have a batch of sentences and each sentence will have a length of seq_len so we need to add a new dimension to the positional encoding
         pe = pe.unsqueeze(0) # (1 , seq_len, d_model)
         self.register_buffer('pe', pe)
-        # We save the positional embedding in a buffere so that we don't have to compute it every time we use the model
+        # We save the positional encoding in a buffer so that we don't have to compute it every time we use the model
         # This will save the data in the buffer whenever we open the model file 
         
         def forward(self, x):
             #x.shape is technicqlly (batch_size, seq_len, d_model) where x.shape[1] will take seq_len
             x = x + (self.pe[: , :x.shape[1], :].requires_grad_(False))
-            # x is the input tensor to the positional embedding layer which represents the token or the word embeddings of the sequence
+            # x is the input tensor to the positional encoding layer which represents the token or the word embeddings of the sequence
             # x is the output of the input embedding layer which takes a word and returns a vector of size 512
-            # False means that the gradient of the positional embedding will not be computed
-            # Positional embeddings will only be computed once and won't be trained on
+            # False means that the gradient of the positional encoding will not be computed
+            # positional encodings will only be computed once and won't be trained on
             return self.dropout(x)
 
 class LayerNormalization(nn.Module):
@@ -279,7 +279,7 @@ class Decoder(nn.Module):
             return self.norm(x)
 
 # Now we build the linear layer which is used to conver the output of the decoder to the output of the model
-# converts the embedding of the output to the sequence of words from the vocabulary and accordingly arranges it based on the positional embedding
+# converts the embedding of the output to the sequence of words from the vocabulary and accordingly arranges it based on the positional encoding
 
 class ProjectionLayer(nn.Module):
 
@@ -297,4 +297,74 @@ class ProjectionLayer(nn.Module):
 # Please refer the transformer architecture diagram in the paper or online
 
 
+class Transformer(nn.Module):
+     
+    def __init__(self, encoder: Encoder, decoder: Decoder, src_embed: InputEmbedding, tgt_embed: InputEmbedding , src_pos: PositionalEncoding, tgt_pos: PositionalEncoding, projection_layer: ProjectionLayer) -> None: 
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.src_embed = src_embed
+        self.tgt_embed = tgt_embed
+        self.src_pos = src_pos
+        self.tgt_pos = tgt_pos
 
+    def encode(self, src, src_mask):
+        src = self.src_embed(src)
+        src = self.src_pos(src)
+        return self.encoder(src, src_mask)
+
+    def decode(self, encoder_output, src_mask, tgt, tgt_mask):
+        tgt = self.tgt_embed(tgt)
+        tgt = self.tgt_pos(tgt)
+        return self.decoder(tgt, encoder_output, src_mask, tgt_mask) # Technically the forward network of the decoder
+
+    def project(self, x):
+        return self.projection_layer(x)
+
+
+# We will be using this for translation
+def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: 512, N: int = 6, h: int = 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer: 
+    # We are building the transformer model with the given parameters. Some of them are fixed based on what is given in the paper
+    # Create the embedding layers
+    src_embed = InputEmbedding(d_model, src_vocab_size)
+    tgt_embed = InputEmbedding(d_model, tgt_vocab_size)
+
+    # Create positional encoding layers
+    src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
+    tgt_pos = PositionalEncoding(d_model, tgt_seq_len, dropout)
+
+    # Create the encoder blocks
+    encoder_blocks = []
+    for _ in range(N):
+        encoder_self_attention_block = MultiHeadAttention(d_model, h, dropout)
+        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+        encoder_block = EncoderBlock(encoder_self_attention_block, feed_forward_block, dropout)  
+        encoder_blocks.append(encoder_block)
+
+    # Create the decoder blocks
+    decoder_blocks = [] 
+    for _ in range(N):
+        decoder_self_attention_block = MultiHeadAttention(d_model, h, dropout)
+        decoder_cross_attention_block = MultiHeadAttention(d_model, h, dropout)
+        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+        decoder_block = DecoderBlock(decoder_self_attention_block, decoder_cross_attention_block, feed_forward_block, dropout)
+        decoder_blocks.append(decoder_block)
+    
+    # Create the encoder and decoder 
+    encoder = Encoder(nn.ModuleList(encoder_blocks))
+    decoder = Decoder(nn.ModuleList(decoder_blocks))
+
+    # Create a projection layer 
+    projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
+
+    # Create the transformer
+    transformer = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
+
+    # We initialize the parameters using the xavier uniform. 
+    # Xavier uniform is an algorithm which provides a proper set of 
+    # parameters so that the model doesn't start with random values
+    for p in transformer.parameter():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p)
+    
+    return transformer
