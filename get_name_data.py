@@ -16,5 +16,8 @@ names = [dat['Name'] for dat in data['results']]
 # print(names)
 print(f'No. of names: {len(names)}')
 
+
+
 with open("names.txt","w") as f:
     f.write('\n'.join(names))
+
