@@ -8,7 +8,7 @@ import torch.nn as nn
 class InputEmbedding(nn.Module):
     # d_model is the dimmension of the model which is going to be 512 if I am not mistaken 
     def __init__(self, d_model:int, vocab_size:int):
-        super().__init_()
+        super().__init__()
         self.d_model = d_model
         self.vocab_size = vocab_size
         # pytorch has a default embedding layer that takes in a vector of size vocab_size and returns a vector of size d_model
@@ -19,7 +19,7 @@ class InputEmbedding(nn.Module):
         # This is because the embedding layer is going to be used to make a vector of size 512 and the weights are going to be 512 x 512
         # So we need to make the weights smaller to make it fit in the vector of size 512
         # embedding layer is a dictionary of size vocab_size and returns a vector of size d_model
-        return self.embedding(x) * math.sqrt(self._model)
+        return self.embedding(x) * math.sqrt(self.d_model)
     
 # Now we will be making a positional encoding layer
 # We know Input Embedding layer will split the input into words and map those words to a vector of size d_model which is usually 512 
@@ -79,14 +79,14 @@ class PositionalEncoding(nn.Module):
         # We save the positional encoding in a buffer so that we don't have to compute it every time we use the model
         # This will save the data in the buffer whenever we open the model file 
         
-        def forward(self, x):
-            #x.shape is technicqlly (batch_size, seq_len, d_model) where x.shape[1] will take seq_len
-            x = x + (self.pe[: , :x.shape[1], :].requires_grad_(False))
-            # x is the input tensor to the positional encoding layer which represents the token or the word embeddings of the sequence
-            # x is the output of the input embedding layer which takes a word and returns a vector of size 512
-            # False means that the gradient of the positional encoding will not be computed
-            # positional encodings will only be computed once and won't be trained on
-            return self.dropout(x)
+    def forward(self, x):
+        #x.shape is technicqlly (batch_size, seq_len, d_model) where x.shape[1] will take seq_len
+        x = x + (self.pe[: , :x.shape[1], :]).requires_grad_(False)
+        # x is the input tensor to the positional encoding layer which represents the token or the word embeddings of the sequence
+        # x is the output of the input embedding layer which takes a word and returns a vector of size 512
+        # False means that the gradient of the positional encoding will not be computed
+        # positional encodings will only be computed once and won't be trained on
+        return self.dropout(x)
 
 class LayerNormalization(nn.Module):
     # Here if we have a batch of size 3 we will take the mean and variance of each item in the batch
@@ -127,7 +127,7 @@ class FeedForwardBlock(nn.Module):
         return self.linear_2(self.dropout(torch.relu(self.linear_1(x))))
         # relu is a ramp function which is used to limit the output of the linear layer to be between 0 and 1
 
-class MultiHeadAttention(nn.Moule):
+class MultiHeadAttention(nn.Module):
 
     def __init__(self, d_model: int, h: int, dropout: float) -> None:
         super().__init__()
@@ -153,7 +153,7 @@ class MultiHeadAttention(nn.Moule):
         attention_scores = (query @ key.transpose(-2,-1,)) / math.sqrt(d_k) # formula
         #  @ means matrix multiplication in pytorch
         if mask is not None:
-            attention_scores = attention_scores.masked_fill(mask == 0, -1e9) # applying softmax on the formula
+            attention_scores.masked_fill_(mask == 0, -1e9) # applying softmax on the formula
         attention_scores = attention_scores.softmax(dim = -1) # (Batch_size, h ,seq_len, seq_len)
         if dropout is not None:
             attention_scores = dropout(attention_scores)
@@ -205,7 +205,7 @@ class ResidualConnection(nn.Module):
     # Refer the diagram in the paper or the transformer architecture
     def __init__(self, dropout: float) -> None:
         super().__init__()
-        self.dropout = dropout
+        self.dropout = nn.Dropout(dropout)
         self.norm = LayerNormalization()
         # norm is used to normalize the input and output of the residual connection
 
@@ -254,7 +254,7 @@ class DecoderBlock(nn.Module):
         self.self_attention_block = self_attention_block
         self.cross_attention_block = cross_attention_block
         self.feed_forward_block = feed_forward_block
-        self.residual_connections = nn.Module([ResidualConnection(dropout) for _ in range(3)])
+        self.residual_connections = nn.ModuleList([ResidualConnection(dropout) for _ in range(3)])
 
     def forward(self, x, encoder_output, src_mask, tgt_mask):
         # Here we deal with translation of languages
@@ -276,7 +276,7 @@ class Decoder(nn.Module):
     def forward(self, x, encoder_output, src_mask, tgt_mask):
         for layer in self.layers:
             x = layer(x, encoder_output, src_mask, tgt_mask)
-            return self.norm(x)
+        return self.norm(x)
 
 # Now we build the linear layer which is used to conver the output of the decoder to the output of the model
 # converts the embedding of the output to the sequence of words from the vocabulary and accordingly arranges it based on the positional encoding
@@ -307,6 +307,7 @@ class Transformer(nn.Module):
         self.tgt_embed = tgt_embed
         self.src_pos = src_pos
         self.tgt_pos = tgt_pos
+        self.projection_layer = projection_layer
 
     def encode(self, src, src_mask):
         src = self.src_embed(src)
@@ -363,7 +364,7 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     # We initialize the parameters using the xavier uniform. 
     # Xavier uniform is an algorithm which provides a proper set of 
     # parameters so that the model doesn't start with random values
-    for p in transformer.parameter():
+    for p in transformer.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)
     
