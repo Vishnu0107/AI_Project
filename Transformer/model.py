@@ -59,12 +59,12 @@ class PositionalEncoding(nn.Module):
         # Here if we have a seq_len of size 5 the the positon vector will look like this
         '''
 
-        tensor([0.0],
+        tensor([[0.0],
                [1.0],
                [2.0]
                [3.0]
-               [4.0])
-        technically a vector of size 5 x 1. Unsqueeze is a function that makes a tensor of size 5 x 1 
+               [4.0]])
+        technically a vector of size 5 x 1. Unsqueeze is a function that makes a tensor of size 1 x 5 x 1 
         
         ''' 
         #Technically this is the formula for the positional encoding
