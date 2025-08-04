@@ -48,3 +48,4 @@ git checkout vishnu/transformer
 git pull origin vishnu/transformer
 ```
 Then just run train.py and the model will get created and then test the Transformer model in the ipynb notebook.
+In the case of Bert, just run the BERT.py program
